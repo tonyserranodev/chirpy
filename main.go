@@ -1,18 +1,42 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+
+	"github.com/tonyserranodev/chirpy/internal/database"
 )
 
+type apiConfig struct {
+	fileServerHits atomic.Int32
+	queries        *database.Queries
+	platform       string
+}
+
 func main() {
-	cfg := apiConfig{}
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("error connecting to db, %v", err)
+	}
+
+	dbQueries := database.New(db)
+
+	cfg := apiConfig{
+		queries:  dbQueries,
+		platform: os.Getenv("PLATFORM"),
+	}
 
 	const port = "8080"
 
@@ -27,10 +51,11 @@ func main() {
 	// api
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	mux.HandleFunc("POST /api/users", cfg.handlerCreateUser)
 
 	// admin
 	mux.HandleFunc("GET /admin/metrics", cfg.handlerMetrics)
-	mux.HandleFunc("GET /admin/reset", cfg.handlerReset)
+	mux.HandleFunc("POST /admin/reset", cfg.handlerReset)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -39,10 +64,6 @@ func main() {
 
 	log.Printf("Serving on port %s\n", port)
 	log.Fatal(srv.ListenAndServe())
-}
-
-type apiConfig struct {
-	fileServerHits atomic.Int32
 }
 
 func (cfg *apiConfig) middleWareMetricsInc(next http.Handler) http.Handler {
@@ -73,11 +94,22 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		respondWithError(w, 403, "forbidden operation")
+		return
+	}
+
+	err := cfg.queries.ResetUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 
+	msg := fmt.Sprintf("Reset successfully! Hits: %v\nUsers reset successfully!", cfg.fileServerHits.Load())
 	cfg.fileServerHits.Store(0)
-	msg := fmt.Sprintf("Reset successfully! Hits: %v", cfg.fileServerHits.Load())
 	w.Write([]byte(msg))
 }
 
