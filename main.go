@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
+
+	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -22,10 +26,11 @@ func main() {
 
 	// api
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
+	mux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 
 	// admin
-	mux.HandleFunc("POST /admin/reset", cfg.handlerReset)
 	mux.HandleFunc("GET /admin/metrics", cfg.handlerMetrics)
+	mux.HandleFunc("GET /admin/reset", cfg.handlerReset)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -74,4 +79,68 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	cfg.fileServerHits.Store(0)
 	msg := fmt.Sprintf("Reset successfully! Hits: %v", cfg.fileServerHits.Load())
 	w.Write([]byte(msg))
+}
+
+func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, 400, "invalid input")
+		return
+	}
+
+	if len(params.Body) > 140 {
+		respondWithError(w, 400, "chirp too long")
+		return
+	}
+
+	cleanedBody := cleanProfanity(params.Body)
+
+	type successResponse struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+	success := successResponse{
+		CleanedBody: cleanedBody,
+	}
+	respondWithJSON(w, 200, success)
+}
+
+func cleanProfanity(text string) string {
+	words := strings.Split(text, " ")
+	for i, word := range words {
+		lowercaseWord := strings.ToLower(word)
+		if lowercaseWord == "kerfuffle" || lowercaseWord == "sharbert" || lowercaseWord == "fornax" {
+			words[i] = "****"
+		}
+	}
+
+	return strings.Join(words, " ")
+}
+
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+	respBody := errorResponse{
+		Error: msg,
+	}
+
+	respondWithJSON(w, code, respBody)
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload any) {
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(dat)
 }
