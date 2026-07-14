@@ -11,4 +11,4 @@ CREATE TABLE chirps (
 );
 
 -- +goose Down
-DELETE FROM chirps;
+DROP TABLE chirps;

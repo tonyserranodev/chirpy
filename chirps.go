@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tonyserranodev/chirpy/internal/auth"
 	"github.com/tonyserranodev/chirpy/internal/database"
 )
 
@@ -21,16 +22,27 @@ type Chirp struct {
 }
 
 func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, 401, "invalid token")
+		return
+	}
+
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, 401, "invalid token")
+		return
+	}
+
 	type parameters struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, 400, "invalid input")
+		respondWithError(w, 400, "bad request")
 		return
 	}
 
@@ -40,7 +52,7 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Body:      validatedBody,
-		UserID:    params.UserID,
+		UserID:    userID,
 	}
 
 	dbChirp, err := cfg.queries.CreateChirp(r.Context(), chirpParams)
@@ -84,6 +96,33 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, 200, chirps)
+}
+
+func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("chirpID")
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		log.Printf("error parsing id: %v\n", err)
+		respondWithError(w, 400, "invalid id")
+		return
+	}
+
+	dbChirp, err := cfg.queries.GetChirpByID(r.Context(), parsedID)
+	if err != nil {
+		log.Printf("error getting chirp: %v\n", err)
+		respondWithError(w, 404, "page not found")
+		return
+	}
+
+	chirp := Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserID:    dbChirp.UserID,
+	}
+
+	respondWithJSON(w, 200, chirp)
 }
 
 func validateChirp(w http.ResponseWriter, text string) string {
