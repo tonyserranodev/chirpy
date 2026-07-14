@@ -13,3 +13,9 @@ WHERE id = $1;
 -- name: GetUserByEmail :one
 SELECT * FROM users
 WHERE email = $1;
+
+-- name: UpdateUserEmailAndPassword :one
+UPDATE users
+SET updated_at = $1, email = $2, hashed_password = $3
+WHERE id = $4
+RETURNING *;
