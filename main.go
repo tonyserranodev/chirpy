@@ -18,12 +18,14 @@ type apiConfig struct {
 	queries        *database.Queries
 	platform       string
 	jwtSecret      string
+	apiKey         string
 }
 
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	jwtSecret := os.Getenv("JWT_SECRET")
+	apiKey := os.Getenv("API_KEY")
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -36,6 +38,7 @@ func main() {
 		queries:   dbQueries,
 		platform:  os.Getenv("PLATFORM"),
 		jwtSecret: jwtSecret,
+		apiKey:    apiKey,
 	}
 
 	const port = "8080"
@@ -52,6 +55,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerReadiness)
 	mux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
 	mux.HandleFunc("POST /api/revoke", cfg.handlerRevoke)
+	mux.HandleFunc("POST /api/polka/webhooks", cfg.handlerUpgradeToChirpyRed)
 
 	mux.HandleFunc("POST /api/users", cfg.handlerCreateUser)
 	mux.HandleFunc("PUT /api/users", cfg.handlerUpdateUser)

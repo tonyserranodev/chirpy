@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -74,6 +75,35 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 }
 
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
+	authorID := r.URL.Query().Get("author_id")
+	sortVal := r.URL.Query().Get("sort")
+	if sortVal != "asc" && sortVal != "desc" {
+		respondWithError(w, 400, "bad request")
+		return
+	}
+
+	var dbChirps []database.Chirp
+	if authorID != "" {
+		parsedID, err := uuid.Parse(authorID)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "internal server error parsing author id")
+			return
+		}
+
+		dbChirps, err = cfg.queries.GetChirpsByAuthorID(r.Context(), parsedID)
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "chirps by author id not found")
+			return
+		}
+
+		chirps := copyChirps(dbChirps)
+
+		sortChirps(sortVal, chirps)
+
+		respondWithJSON(w, 200, chirps)
+		return
+	}
+
 	dbChirps, err := cfg.queries.GetChirps(r.Context())
 	if err != nil {
 		log.Printf("error getting chirps: %v\n", err)
@@ -81,8 +111,14 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chirps := make([]Chirp, 0, len(dbChirps))
+	chirps := copyChirps(dbChirps)
+	sortChirps(sortVal, chirps)
 
+	respondWithJSON(w, 200, chirps)
+}
+
+func copyChirps(dbChirps []database.Chirp) []Chirp {
+	chirps := make([]Chirp, 0, len(dbChirps))
 	for _, dbChirp := range dbChirps {
 		chirp := Chirp{
 			ID:        dbChirp.ID,
@@ -95,7 +131,20 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		chirps = append(chirps, chirp)
 	}
 
-	respondWithJSON(w, 200, chirps)
+	return chirps
+}
+
+func sortChirps(sortVal string, chirps []Chirp) {
+	if sortVal == "desc" {
+		sort.Slice(chirps, func(i, j int) bool {
+			return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+		})
+		return
+	}
+
+	sort.Slice(chirps, func(i, j int) bool {
+		return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+	})
 }
 
 func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request) {
